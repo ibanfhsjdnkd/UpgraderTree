@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upgrader Tree: Infinite Income</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: rgba(30, 41, 59, 0.7);
+            --accent: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.3);
+            --text: #f8fafc;
+            --node-locked: #334155;
+            --node-bought: #22c55e;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        /* Боковая панель кликера */
+        #sidebar {
+            width: 320px;
+            background: var(--panel-bg);
+            backdrop-filter: blur(10px);
+            border-right: 1px solid rgba(255,255,255,0.1);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 5px 0 25px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+
+        h1 { margin: 0 0 10px 0; font-size: 1.5rem; text-align: center; color: var(--accent); }
+        .stats { text-align: center; margin-bottom: 20px; }
+        .money-display { font-size: 2rem; font-weight: bold; color: #4ade80; text-shadow: 0 0 10px rgba(74,222,128,0.3); }
+        .cps-display { font-size: 0.9rem; color: #94a3b8; margin-top: 5px; }
+
+        #click-btn {
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            border: 4px solid var(--accent);
+            background: radial-gradient(circle, #1e293b 0%, #0f172a 100%);
+            color: var(--text);
+            font-size: 1.2rem;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 0 20px var(--accent-glow);
+            transition: transform 0.05s, box-shadow 0.2s;
+            outline: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 20px 0;
+        }
+
+        #click-btn:active {
+            transform: scale(0.92);
+            box-shadow: 0 0 35px var(--accent);
+        }
+
+        /* Область дерева исследований */
+        #tree-container {
+            flex-grow: 1;
+            position: relative;
+            overflow: auto;
+            background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
+        }
+
+        #svg-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 2000px;
+            height: 2000px;
+            pointer-events: none;
+        }
+
+        .node-tree {
+            position: absolute;
+            width: 2000px;
+            height: 2000px;
+        }
+
+        /* Узлы апгрейдов */
+        .node {
+            position: absolute;
+            width: 130px;
+            height: 90px;
+            background: var(--panel-bg);
+            border: 2px solid var(--node-locked);
+            border-radius: 12px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            backdrop-filter: blur(5px);
+        }
+
+        .node:hover { transform: translateY(-3px); }
+        .node.available { border-color: var(--accent); box-shadow: 0 0 15px var(--accent-glow); }
+        .node.bought { border-color: var(--node-bought); background: rgba(34, 197, 94, 0.15); }
+        .node.locked { opacity: 0.5; cursor: not-allowed; }
+
+        .node-title { font-size: 0.8rem; font-weight: bold; }
+        .node-desc { font-size: 0.65rem; color: #94a3b8; }
+        .node-cost { font-size: 0.75rem; font-weight: bold; color: #facc15; }
+
+        /* Всплывающий текст от клика */
+        .floating-text {
+            position: absolute;
+            color: #4ade80;
+            font-weight: bold;
+            font-size: 1.2rem;
+            pointer-events: none;
+            animation: floatUp 0.8s ease-out forwards;
+        }
+
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-40px); }
+        }
+
+        line { stroke: #334155; stroke-width: 3; transition: stroke 0.5s; }
+        line.active { stroke: var(--accent); stroke-width: 4; filter: drop-shadow(0 0 5px var(--accent)); }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h1>UPGRADER TREE</h1>
+        <div class="stats">
+            <div class="money-display" id="money">$0</div>
+            <div class="cps-display" id="cps">Пассивный доход: $0/сек</div>
+        </div>
+        <button id="click-btn">КЛИК!</button>
+        <div style="font-size: 0.75rem; color: #64748b; margin-top: auto; text-align: center;">
+            Прогресс сохраняется автоматически
+        </div>
+    </div>
+
+    <div id="tree-container">
+        <svg id="svg-canvas"></svg>
+        <div class="node-tree" id="nodes-layer"></div>
+    </div>
+
+    <script>
+        // Состояние игры
+        let gameData = {
+            money: 0,
+            clickPower: 1,
+            boughtNodes: []
+        };
+
+        // Структура Дерева Апгрейдов (UpgraderTree)
+        const treeData = [
+            // Линия А (Клики)
+            { id: 'start', title: 'Старт', desc: '+1 к клику', cost: 0, x: 200, y: 300, req: [], apply: () => gameData.clickPower += 0 },
+            { id: 'a1', title: 'Усиленный Клик', desc: '+2 к клику', cost: 15, x: 400, y: 200, req: ['start'], apply: () => gameData.clickPower += 2 },
+            { id: 'a2', title: 'Двойной Клик', desc: '+5 к клику', cost: 100, x: 600, y: 200, req: ['a1'], apply: () => gameData.clickPower += 5 },
+            { id: 'a3', title: 'Сила Мыши', desc: 'Удваивает клики', cost: 500, x: 800, y: 200, req: ['a2'], apply: () => gameData.clickPower *= 2 },
+            
+            // Линия B (Пассивный доход)
+            { id: 'b1', title: 'Авто-Кликер', desc: '+1$/сек', cost: 50, x: 400, y: 400, req: ['start'], apply: () => {} },
+            { id: 'b2', title: 'Сервер', desc: '+10$/сек', cost: 300, x: 600, y: 400, req: ['b1'], apply: () => {} },
+            { id: 'b3', title: 'Дата-Центр', desc: '+50$/сек', cost: 2000, x: 800, y: 400, req: ['b2'], apply: () => {} },
+
+            // Гибридные ветки дальше
+            { id: 'c1', title: 'Синергия', desc: '+20 к клику, +15$/сек', cost: 1200, x: 700, y: 300, req: ['a2', 'b2'], apply: () => gameData.clickPower += 20 },
+            { id: 'c2', title: 'Квантовый Чип', desc: 'Умножает ВСЕ на x2', cost: 10000, x: 1000, y: 300, req: ['a3', 'c1', 'b3'], apply: () => gameData.clickPower *= 2 }
+        ];
+
+        // Значения CPS (пассивного дохода) для узлов
+        const nodeCPS = {
+            'b1': 1,
+            'b2': 10,
+            'b3': 50,
+            'c1': 15
+        };
+
+        // DOM элементы
+        const moneyEl = document.getElementById('money');
+        const cpsEl = document.getElementById('cps');
+        const clickBtn = document.getElementById('click-btn');
+        const nodesLayer = document.getElementById('nodes-layer');
+        const svgCanvas = document.getElementById('svg-canvas');
+
+        // Вычисление текущего пассивного дохода
+        function getCPS() {
+            let cps = 0;
+            gameData.boughtNodes.forEach(id => {
+                if (nodeCPS[id]) cps += nodeCPS[id];
+            });
+            if (gameData.boughtNodes.includes('c2')) cps *= 2;
+            return cps;
+        }
+
+        // Форматирование чисел
+        function formatMoney(num) {
+            if (num >= 1e6) return '$' + (num / 1e6).toFixed(2) + 'M';
+            if (num >= 1e3) return '$' + (num / 1e3).toFixed(1) + 'k';
+            return '$' + Math.floor(num);
+        }
+
+        // Отрисовка связей (линий)
+        function drawConnections() {
+            svgCanvas.innerHTML = '';
+            treeData.forEach(node => {
+                node.req.forEach(reqId => {
+                    const parentNode = treeData.find(n => n.id === reqId);
+                    if (parentNode) {
+                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        line.setAttribute('x1', parentNode.x + 65);
+                        line.setAttribute('y1', parentNode.y + 45);
+                        line.setAttribute('x2', node.x + 65);
+                        line.setAttribute('y2', node.y + 45);
+                        
+                        if (gameData.boughtNodes.includes(parentNode.id) && gameData.boughtNodes.includes(node.id)) {
+                            line.classList.add('active');
+                        }
+                        svgCanvas.appendChild(line);
+                    }
+                });
+            });
+        }
+
+        // Создание узлов на экране
+        function renderTree() {
+            nodesLayer.innerHTML = '';
+            treeData.forEach(node => {
+                const el = document.createElement('div');
+                el.className = 'node';
+                el.style.left = node.x + 'px';
+                el.style.top = node.y + 'px';
+                el.id = `node-${node.id}`;
+
+                const isBought = gameData.boughtNodes.includes(node.id);
+                const reqMet = node.req.every(reqId => gameData.boughtNodes.includes(reqId));
+
+                if (isBought) {
+                    el.classList.add('bought');
+                } else if (reqMet) {
+                    el.classList.add('available');
+                } else {
+                    el.classList.add('locked');
+                }
+
+                el.innerHTML = `
+                    <div class="node-title">${node.title}</div>
+                    <div class="node-desc">${node.desc}</div>
+                    <div class="node-cost">${isBought ? 'КУПЛЕНО' : formatMoney(node.cost)}</div>
+                `;
+
+                el.addEventListener('click', () => buyNode(node));
+                nodesLayer.appendChild(el);
+            });
+            drawConnections();
+        }
+
+        // Покупка узла
+        function buyNode(node) {
+            const isBought = gameData.boughtNodes.includes(node.id);
+            const reqMet = node.req.every(reqId => gameData.boughtNodes.includes(reqId));
+
+            if (!isBought && reqMet && gameData.money >= node.cost) {
+                gameData.money -= node.cost;
+                gameData.boughtNodes.push(node.id);
+                node.apply();
+                saveGame();
+                updateUI();
+                renderTree();
+            }
+        }
+
+        // Клик по кнопке
+        clickBtn.addEventListener('click', (e) => {
+            gameData.money += gameData.clickPower;
+            
+            // Анимация текста клика
+            const floatText = document.createElement('div');
+            floatText.className = 'floating-text';
+            floatText.innerText = `+${formatMoney(gameData.clickPower)}`;
+            floatText.style.left = `${e.clientX - 20}px`;
+            floatText.style.top = `${e.clientY - 20}px`;
+            document.body.appendChild(floatText);
+            
+            setTimeout(() => floatText.remove(), 800);
+            
+            updateUI();
+        });
+
+        // Обновление UI
+        function updateUI() {
+            moneyEl.innerText = formatMoney(gameData.money);
+            cpsEl.innerText = `Пассивный доход: ${formatMoney(getCPS())}/сек`;
+        }
+
+        // Игровой цикл (10 раз в секунду)
+        setInterval(() => {
+            gameData.money += getCPS() / 10;
+            updateUI();
+            
+            // Проверка доступности покупки узлов для подсветки
+            treeData.forEach(node => {
+                const el = document.getElementById(`node-${node.id}`);
+                if (el && !gameData.boughtNodes.includes(node.id)) {
+                    const reqMet = node.req.every(reqId => gameData.boughtNodes.includes(reqId));
+                    if (reqMet && gameData.money >= node.cost) {
+                        el.style.borderColor = '#4ade80';
+                    } else if (reqMet) {
+                        el.style.borderColor = '#38bdf8';
+                    }
+                }
+            });
+        }, 100);
+
+        // Автосохранение
+        function saveGame() {
+            localStorage.setItem('upgrader_tree_save', JSON.stringify(gameData));
+        }
+
+        function loadGame() {
+            const saved = localStorage.getItem('upgrader_tree_save');
+            if (saved) {
+                gameData = JSON.parse(saved);
+                // Автоматически покупаем стартовый узел, если игра новая
+            }
+            if (!gameData.boughtNodes.includes('start')) {
+                gameData.boughtNodes.push('start');
+            }
+        }
+
+        setInterval(saveGame, 5000);
+
+        // Старт
+        loadGame();
+        renderTree();
+        updateUI();
+    </script>
+</body>
+      </html>
